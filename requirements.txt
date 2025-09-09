@@ -1,2 +1,4 @@
 python-telegram-bot==20.7
 schedule==1.2.0
+fastapi==0.104.1      # NEW - For web server
+uvicorn==0.24.0       # NEW - ASGI server
