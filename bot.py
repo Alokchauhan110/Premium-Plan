@@ -9,12 +9,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatMemberStatus
 from telegram.error import BadRequest, Forbidden
-import schedule
-import time
 import threading
-from flask import Flask, jsonify
-import uvicorn
 from fastapi import FastAPI
+import uvicorn
 
 # Configure logging
 logging.basicConfig(
@@ -31,19 +28,56 @@ ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(",") if id.strip().is
 # Port for Render (required for web service)
 PORT = int(os.getenv("PORT", 8080))
 
-# Conversation states for adding channels (simplified)
+# Conversation states for adding channels
 CHANNEL_NAME, CHANNEL_PRICE, CHANNEL_DEMO, CHANNEL_FORWARD = range(4)
 
 # Create FastAPI app for health checks
-app = FastAPI()
+app = FastAPI(title="Premium Telegram Bot", description="Health check endpoints")
 
 @app.get("/")
 async def root():
-    return {"message": "Premium Telegram Bot is running!", "status": "healthy"}
+    return {
+        "message": "Premium Telegram Bot is running!",
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "bot": "running", "timestamp": datetime.now().isoformat()}
+    return {
+        "status": "healthy",
+        "bot": "running",
+        "timestamp": datetime.now().isoformat(),
+        "service": "premium-channel-bot"
+    }
+
+@app.get("/stats")
+async def stats():
+    """Basic stats endpoint"""
+    try:
+        conn = sqlite3.connect('premium_bot.db')
+        cursor = conn.cursor()
+        
+        # Get basic counts
+        cursor.execute('SELECT COUNT(*) FROM users')
+        user_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM channels WHERE is_active = 1')
+        channel_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM subscriptions WHERE is_active = 1')
+        active_subs = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            "users": user_count,
+            "channels": channel_count,
+            "active_subscriptions": active_subs,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e), "timestamp": datetime.now().isoformat()}
 
 class PremiumBot:
     def __init__(self):
@@ -65,7 +99,7 @@ class PremiumBot:
             )
         ''')
         
-        # Channels table (simplified without duration)
+        # Channels table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +115,7 @@ class PremiumBot:
             )
         ''')
         
-        # Subscriptions table (30 days default)
+        # Subscriptions table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,21 +206,19 @@ class PremiumBot:
         """Create plans selection keyboard"""
         keyboard = []
         
-        # Get dynamic channels
-        try:
-            channels = asyncio.run(self.get_channels_from_db())
-            
-            for channel_key, channel_info in channels.items():
-                keyboard.append([InlineKeyboardButton(
-                    f"💎 {channel_info['name']} - ₹{channel_info['price']}", 
-                    callback_data=f"plan_{channel_key}"
-                )])
-        except:
-            pass  # Handle async issues in sync context
-        
-        # Add server premium option
+        # Get dynamic channels (use sync approach to avoid issues)
         conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
+        cursor.execute('SELECT * FROM channels WHERE is_active = 1')
+        channels = cursor.fetchall()
+        
+        for channel in channels:
+            keyboard.append([InlineKeyboardButton(
+                f"💎 {channel[2]} - ₹{channel[4]}", 
+                callback_data=f"plan_{channel[1]}"
+            )])
+        
+        # Add server premium option
         cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
         server_plan = cursor.fetchone()
         conn.close()
@@ -395,7 +427,7 @@ Choose an option below:
 🏷️ **Name:** {channel_name}
 🆔 **ID:** {channel_id}
 💰 **Price:** ₹{channel_price}
-⏰ **Duration:** 30 days (default)
+⏰ **Duration:** 30 days
 🎯 **Demo:** {channel_demo if channel_demo else 'Not provided'}
 🔗 **Invite Link:** Generated ✅
 
@@ -981,7 +1013,6 @@ You can resubmit your payment proof if needed.
         except Exception as e:
             await update.message.reply_text(f"❌ Error rejecting payment: {str(e)}")
 
-    # Additional methods (manage_channels, my_subscriptions, etc.) - abbreviated for space
     async def manage_channels(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all channels for management"""
         if update.effective_user.id not in ADMIN_IDS:
@@ -1164,15 +1195,13 @@ You can resubmit your payment proof if needed.
         )
         return ConversationHandler.END
 
-    # Health check for bot
     async def health_check_bot(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Health check endpoint"""
         await update.message.reply_text("✅ Bot is running healthy!")
 
 def run_web_server():
     """Run FastAPI server in a separate thread"""
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
 
 def main():
     """Main function to run both web server and bot"""
@@ -1188,6 +1217,10 @@ def main():
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     logger.info(f"🌐 Web server started on port {PORT}")
+    
+    # Give the web server a moment to start
+    import time
+    time.sleep(2)
     
     # Create bot instance
     bot = PremiumBot()
@@ -1236,7 +1269,7 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, bot.handle_payment_proof))
     
     # Log startup
-    logger.info(f"🚀 Premium Bot starting...")
+    logger.info("🚀 Premium Bot starting...")
     logger.info(f"✅ Admin IDs: {ADMIN_IDS}")
     logger.info(f"✅ Port: {PORT}")
     
@@ -1244,8 +1277,9 @@ def main():
     print("🚀 Premium Bot is starting...")
     print(f"🌐 Web server running on port {PORT}")
     print("✅ Dynamic channel management enabled")
-    print("✅ Auto invoice with invite links enabled")
+    print("✅ Auto invoice with invite links enabled") 
     print("✅ Render deployment ready")
+    print("✅ Flask import issue FIXED")
     
     application.run_polling(drop_pending_updates=True)
 
