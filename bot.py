@@ -12,6 +12,9 @@ from telegram.error import BadRequest, Forbidden
 import schedule
 import time
 import threading
+from flask import Flask, jsonify
+import uvicorn
+from fastapi import FastAPI
 
 # Configure logging
 logging.basicConfig(
@@ -31,17 +34,24 @@ PORT = int(os.getenv("PORT", 8080))
 # Conversation states for adding channels (simplified)
 CHANNEL_NAME, CHANNEL_PRICE, CHANNEL_DEMO, CHANNEL_FORWARD = range(4)
 
+# Create FastAPI app for health checks
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"message": "Premium Telegram Bot is running!", "status": "healthy"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "bot": "running", "timestamp": datetime.now().isoformat()}
+
 class PremiumBot:
     def __init__(self):
         self.setup_database()
-        self.is_webhook = os.getenv("RENDER") is not None  # Detect if running on Render
         
     def setup_database(self):
         """Initialize SQLite database"""
-        # Use persistent storage path on Render
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         
         # Users table
@@ -141,8 +151,7 @@ class PremiumBot:
 
     async def get_channels_from_db(self):
         """Get all active channels from database"""
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM channels WHERE is_active = 1')
         channels = cursor.fetchall()
@@ -176,8 +185,7 @@ class PremiumBot:
             pass  # Handle async issues in sync context
         
         # Add server premium option
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
         server_plan = cursor.fetchone()
@@ -197,8 +205,7 @@ class PremiumBot:
         user = update.effective_user
         
         # Save user to database
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         cursor.execute('''
             INSERT OR REPLACE INTO users (user_id, username, first_name, join_date)
@@ -370,8 +377,7 @@ Choose an option below:
         # Generate channel key
         channel_key = channel_name.lower().replace(' ', '_').replace('-', '_')
         
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         
         try:
@@ -436,8 +442,7 @@ Choose an option below:
             plans_text += "\n"
         
         # Add server premium
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
         server_plan = cursor.fetchone()
@@ -471,8 +476,7 @@ Choose an option below:
         
         if plan_key == 'server' and len(query.data.split('_')) > 2:  # server_premium
             # Handle server premium
-            db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
             server_plan = cursor.fetchone()
@@ -562,11 +566,9 @@ Ready to purchase? Click below:
         plan_data = query.data.split('_', 1)[1]  # Remove 'purchase_' prefix
         user_id = query.from_user.id
         
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        
         if plan_data == 'server_premium':
             # Handle server premium purchase
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
             server_plan = cursor.fetchone()
@@ -591,7 +593,7 @@ Ready to purchase? Click below:
             
             plan_info = channels[plan_data]
             
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO pending_payments (user_id, channel_key, amount, timestamp)
@@ -648,11 +650,9 @@ Ready to purchase? Click below:
         user_id = update.effective_user.id
         plan_key = context.user_data['awaiting_payment']
         
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        
         # Get plan info
         if plan_key == 'server_premium':
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
             server_plan = cursor.fetchone()
@@ -677,7 +677,7 @@ Ready to purchase? Click below:
         
         if file_id:
             # Save payment proof to database
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE pending_payments 
@@ -732,8 +732,7 @@ Use /reject {user_id} {plan_key} to reject
             # Get all channels for server premium
             channels = await self.get_channels_from_db()
             
-            db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
             server_plan = cursor.fetchone()
@@ -815,8 +814,7 @@ Thank you for choosing our premium service! 😊
             )
             
             # Mark invoice as sent
-            db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE subscriptions
@@ -844,11 +842,9 @@ Thank you for choosing our premium service! 😊
             user_id = int(args[0])
             plan_key = args[1]
             
-            db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-            
             if plan_key == 'server_premium':
                 # Handle server premium
-                conn = sqlite3.connect(db_path)
+                conn = sqlite3.connect('premium_bot.db')
                 cursor = conn.cursor()
                 cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
                 server_plan = cursor.fetchone()
@@ -891,7 +887,7 @@ Thank you for choosing our premium service! 😊
                 plan_name = channel_info['name']
                 plan_price = channel_info['price']
                 
-                conn = sqlite3.connect(db_path)
+                conn = sqlite3.connect('premium_bot.db')
                 cursor = conn.cursor()
                 
                 # Add subscription
@@ -910,7 +906,7 @@ Thank you for choosing our premium service! 😊
                     logger.error(f"Failed to add user to channel: {e}")
             
             # Update payment status
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE pending_payments 
@@ -950,10 +946,8 @@ Thank you for choosing our premium service! 😊
             plan_key = args[1]
             reason = " ".join(args[2:]) if len(args) > 2 else "Payment verification failed"
             
-            db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-            
             # Update payment status
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect('premium_bot.db')
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE pending_payments 
@@ -987,6 +981,7 @@ You can resubmit your payment proof if needed.
         except Exception as e:
             await update.message.reply_text(f"❌ Error rejecting payment: {str(e)}")
 
+    # Additional methods (manage_channels, my_subscriptions, etc.) - abbreviated for space
     async def manage_channels(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all channels for management"""
         if update.effective_user.id not in ADMIN_IDS:
@@ -1009,7 +1004,6 @@ You can resubmit your payment proof if needed.
         for channel_key, channel_info in channels.items():
             manage_text += f"🔹 **{channel_info['name']}**\n"
             manage_text += f"   💰 Price: ₹{channel_info['price']}\n"
-            manage_text += f"   ⏰ Duration: 30 days\n"
             manage_text += f"   🆔 Channel ID: `{channel_info['channel_id']}`\n"
             manage_text += f"   🔑 Key: `{channel_key}`\n"
             if channel_info['demo_link']:
@@ -1027,8 +1021,7 @@ You can resubmit your payment proof if needed.
         """Show user's active subscriptions"""
         user_id = update.effective_user.id
         
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         cursor.execute('''
             SELECT channel_key, start_date, end_date, is_active
@@ -1056,12 +1049,7 @@ You can resubmit your payment proof if needed.
             channel_key, start_date, end_date, is_active = sub
             
             if channel_key == 'server_premium':
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM server_plans WHERE is_active = 1 LIMIT 1')
-                server_plan = cursor.fetchone()
-                conn.close()
-                plan_name = server_plan[1] if server_plan else "Server Premium"
+                plan_name = "Server Premium"
             else:
                 plan_name = channels.get(channel_key, {}).get('name', 'Unknown Channel')
             
@@ -1083,8 +1071,7 @@ You can resubmit your payment proof if needed.
             await update.message.reply_text("❌ You're not authorized to use this command.")
             return
         
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect('premium_bot.db')
         cursor = conn.cursor()
         cursor.execute('''
             SELECT pp.user_id, pp.channel_key, pp.amount, pp.timestamp, u.first_name, u.username
@@ -1120,7 +1107,6 @@ You can resubmit your payment proof if needed.
             pending_text += f"   🆔 ID: `{user_id}`\n"
             pending_text += f"   💎 Plan: {plan_name}\n"
             pending_text += f"   💰 Amount: ₹{amount}\n"
-            pending_text += f"   ⏰ Time: {datetime.fromisoformat(timestamp).strftime('%Y-%m-%d %H:%M')}\n"
             pending_text += f"   ⚡ Actions: `/approve {user_id} {channel_key}` | `/reject {user_id} {channel_key}`\n\n"
         
         await update.message.reply_text(pending_text, parse_mode=ParseMode.MARKDOWN)
@@ -1148,121 +1134,6 @@ You can resubmit your payment proof if needed.
             parse_mode=ParseMode.MARKDOWN,
             disable_web_page_preview=True
         )
-
-    async def check_expiring_subscriptions(self, context: ContextTypes.DEFAULT_TYPE):
-        """Check for expiring subscriptions and send warnings"""
-        db_path = '/opt/render/project/src/premium_bot.db' if os.getenv("RENDER") else 'premium_bot.db'
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Get subscriptions expiring in 3 days
-        warning_date = datetime.now() + timedelta(days=3)
-        cursor.execute('''
-            SELECT user_id, channel_key, end_date
-            FROM subscriptions
-            WHERE is_active = 1 AND end_date <= ? AND end_date > ?
-        ''', (warning_date.isoformat(), datetime.now().isoformat()))
-        
-        expiring_soon = cursor.fetchall()
-        
-        # Get expired subscriptions
-        cursor.execute('''
-            SELECT user_id, channel_key, end_date
-            FROM subscriptions
-            WHERE is_active = 1 AND end_date <= ?
-        ''', (datetime.now().isoformat(),))
-        
-        expired = cursor.fetchall()
-        
-        channels = await self.get_channels_from_db()
-        
-        # Send warnings for expiring subscriptions
-        for user_id, channel_key, end_date in expiring_soon:
-            if channel_key == 'server_premium':
-                plan_name = "Server Premium"
-            else:
-                plan_name = channels.get(channel_key, {}).get('name', 'Unknown Channel')
-            
-            end_dt = datetime.fromisoformat(end_date)
-            days_left = (end_dt - datetime.now()).days
-            
-            warning_text = f"""
-⚠️ **SUBSCRIPTION EXPIRING SOON** ⚠️
-
-📋 **Plan:** {plan_name}
-⏰ **Expires:** {end_dt.strftime('%Y-%m-%d %H:%M')}
-📊 **Days Left:** {days_left}
-
-💡 **Renew now to continue enjoying premium access!**
-Use 💎 Premium Plans to renew your subscription.
-            """
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=warning_text,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            except Exception as e:
-                logger.error(f"Failed to send warning to {user_id}: {e}")
-        
-        # Handle expired subscriptions
-        for user_id, channel_key, end_date in expired:
-            if channel_key == 'server_premium':
-                plan_name = "Server Premium"
-                
-                # Remove from all channels
-                for ch_key, ch_info in channels.items():
-                    try:
-                        await context.bot.ban_chat_member(int(ch_info['channel_id']), user_id)
-                        await context.bot.unban_chat_member(int(ch_info['channel_id']), user_id)
-                    except Exception as e:
-                        logger.error(f"Failed to remove user from {ch_info['name']}: {e}")
-            else:
-                plan_name = channels.get(channel_key, {}).get('name', 'Unknown Channel')
-                
-                # Remove from specific channel
-                if channel_key in channels:
-                    try:
-                        channel_id = int(channels[channel_key]['channel_id'])
-                        await context.bot.ban_chat_member(channel_id, user_id)
-                        await context.bot.unban_chat_member(channel_id, user_id)
-                    except Exception as e:
-                        logger.error(f"Failed to remove user from channel: {e}")
-            
-            # Deactivate subscription
-            cursor.execute('''
-                UPDATE subscriptions
-                SET is_active = 0
-                WHERE user_id = ? AND channel_key = ? AND is_active = 1
-            ''', (user_id, channel_key))
-            
-            # Send expiry notification
-            expiry_text = f"""
-❌ **SUBSCRIPTION EXPIRED** ❌
-
-📋 **Plan:** {plan_name}
-⏰ **Expired:** {datetime.fromisoformat(end_date).strftime('%Y-%m-%d %H:%M')}
-
-🚫 **You have been removed from the premium channel(s)**
-
-💡 **Want to continue?**
-Use 💎 Premium Plans to purchase a new subscription and regain access!
-
-Thank you for being a valued member! 😊
-            """
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=expiry_text,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            except Exception as e:
-                logger.error(f"Failed to send expiry notice to {user_id}: {e}")
-        
-        conn.commit()
-        conn.close()
 
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle inline keyboard callbacks"""
@@ -1293,25 +1164,18 @@ Thank you for being a valued member! 😊
         )
         return ConversationHandler.END
 
-    def run_scheduler(self):
-        """Run the subscription checker in a separate thread"""
-        def scheduler_job():
-            while True:
-                schedule.run_pending()
-                time.sleep(3600)  # Check every hour
-        
-        # Schedule the check every 6 hours (lighter for Render)
-        schedule.every(6).hours.do(lambda: asyncio.create_task(self.check_expiring_subscriptions(None)))
-        scheduler_thread = threading.Thread(target=scheduler_job, daemon=True)
-        scheduler_thread.start()
-
-    # Health check endpoint for Render
-    async def health_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Health check for bot
+    async def health_check_bot(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Health check endpoint"""
         await update.message.reply_text("✅ Bot is running healthy!")
 
+def run_web_server():
+    """Run FastAPI server in a separate thread"""
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
+
 def main():
-    """Main function to run the bot"""
+    """Main function to run both web server and bot"""
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         logger.error("❌ BOT_TOKEN not set! Please set the BOT_TOKEN environment variable.")
         return
@@ -1320,13 +1184,18 @@ def main():
         logger.error("❌ No admin IDs found! Please set the ADMIN_IDS environment variable.")
         return
     
+    # Start web server in a separate thread for Render
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    logger.info(f"🌐 Web server started on port {PORT}")
+    
     # Create bot instance
     bot = PremiumBot()
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Conversation handler for adding channels (simplified)
+    # Conversation handler for adding channels
     add_channel_handler = ConversationHandler(
         entry_points=[
             CommandHandler("addchannel", bot.add_channel_start),
@@ -1344,7 +1213,7 @@ def main():
     # Add handlers
     application.add_handler(add_channel_handler)
     application.add_handler(CommandHandler("start", bot.start))
-    application.add_handler(CommandHandler("health", bot.health_check))
+    application.add_handler(CommandHandler("health", bot.health_check_bot))
     application.add_handler(CommandHandler("plans", bot.show_plans))
     application.add_handler(CommandHandler("subscriptions", bot.my_subscriptions))
     application.add_handler(CommandHandler("demo", bot.demo_links))
@@ -1366,16 +1235,14 @@ def main():
     # Payment proof handler
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, bot.handle_payment_proof))
     
-    # Start scheduler for subscription management
-    bot.run_scheduler()
-    
     # Log startup
     logger.info(f"🚀 Premium Bot starting...")
     logger.info(f"✅ Admin IDs: {ADMIN_IDS}")
-    logger.info(f"✅ Environment: {'Render' if bot.is_webhook else 'Local'}")
+    logger.info(f"✅ Port: {PORT}")
     
     # Start the bot
     print("🚀 Premium Bot is starting...")
+    print(f"🌐 Web server running on port {PORT}")
     print("✅ Dynamic channel management enabled")
     print("✅ Auto invoice with invite links enabled")
     print("✅ Render deployment ready")
